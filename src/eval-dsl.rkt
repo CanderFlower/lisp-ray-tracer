@@ -40,6 +40,7 @@
    'tan (lambda (x) (tan x))
    'sqrt (lambda (x) (sqrt x))
    'abs (lambda (x) (abs x))
+   'string->symbol string->symbol
    'number->string (lambda (x) (number->string x))
    'string-append (lambda args (apply string-append args))
    'string-pad-left (lambda (s total pad)
@@ -79,6 +80,13 @@
       (hash-set! settings 'samples 50)
       (hash-set! settings 'max-depth 5)
       (Scene cam objs lights groups background settings rc))))
+
+;; 用于处理各种名字
+(define (resolve-symbol-or-value v env)
+  (if (symbol? v)
+      (let ([binding (assoc v env)])
+        (if binding (cdr binding) v))
+      v))
 
 ;; ----------------------------------------
 ;; handle-command: 解析并执行一条 DSL 命令（S-Expr）
@@ -128,26 +136,29 @@
           (void))]
        ;; add-object: (add-object name (sphere ...)|(plane ...)|...)
        [`(add-object ,name . ,rest)
-        (unless (symbol? name) (error "add-object: name must be symbol"))
-        (when (hash-has-key? (Scene-objects (global-scene)) name)
-          (error "add-object: object already exists:" name))
-        (let ([spec (if (= (length rest) 1) (first rest) (cons 'begin rest))])
-          (let ([obj (parse-object-spec spec env)])
-            (hash-set! (Scene-objects (global-scene)) name obj)
-            (displayln (format "Added object ~a." name))))
-        (void)]
+        (let ([real-name (resolve-symbol-or-value name env)])
+          (unless (symbol? real-name) (error "add-object: name must be symbol"))
+          (when (hash-has-key? (Scene-objects (global-scene)) real-name)
+            (error "add-object: object already exists:" real-name))
+          (let ([spec (if (= (length rest) 1) (first rest) (cons 'begin rest))])
+            (let ([obj (parse-object-spec spec env)])
+              (hash-set! (Scene-objects (global-scene)) real-name obj)
+              (displayln (format "Added object ~a." real-name)))))
+          (void)]
        ;; update-object: (update-object name (center x y z)) 或 (update-object name (material ...)), 只能一个更新 spec
-       [`(update-object ,name ,update-spec)
+       [`(update-object ,tname ,update-spec)
+       (let ([name (resolve-symbol-or-value tname env)])
         (unless (symbol? name) (error "update-object: name must be symbol"))
         (let ([tbl (Scene-objects (global-scene))])
           (unless (hash-has-key? tbl name)
             (error "update-object: object not found:" name))
           (let ([old (hash-ref tbl name)])
             (apply-object-update! old update-spec env)
-            (displayln (format "Updated object ~a." name))))
+            (displayln (format "Updated object ~a." name)))))
         (void)]
        ;; transform: (transform name spec)
-       [`(transform ,name ,transform-spec)
+       [`(transform ,tname ,transform-spec)
+       (let ([name (resolve-symbol-or-value tname env)])
         (unless (symbol? name) (error "transform: name must be symbol"))
         ;; 可能 name 是 object, light, group, 或 'camera
         (cond
@@ -209,7 +220,7 @@
            )
           ]
           [else
-           (error "transform: name not found:" name)])
+           (error "transform: name not found:" name)]))
         (void)]
        ;; group: (group group-name name1 name2 ...)
        [`(group ,group-name ,@members)
@@ -251,37 +262,41 @@
         (void)]
        ;; add-light: (add-light name (point-light ...)|...)
        [`(add-light ,name . ,rest)
+       (let ([real-name (resolve-symbol-or-value name env)])
         (unless (symbol? name) (error "add-light: name must be symbol"))
         (when (hash-has-key? (Scene-lights (global-scene)) name)
           (error "add-light: light already exists:" name))
         (let ([spec (if (= (length rest) 1) (first rest) (cons 'begin rest))])
           (let ([light (parse-light-spec spec env)])
             (hash-set! (Scene-lights (global-scene)) name light)
-            (displayln (format "Added light ~a." name))))
+            (displayln (format "Added light ~a." name)))))
         (void)]
        ;; update-light: (update-light name (pos x y z)) or (update-light name (intensity r g b)), or both?
        [`(update-light ,name ,update-spec)
+       (let ([real-name (resolve-symbol-or-value name env)])
         (unless (symbol? name) (error "update-light: name must be symbol"))
         (let ([tbl (Scene-lights (global-scene))])
           (unless (hash-has-key? tbl name)
             (error "update-light: light not found:" name))
           (let ([light (hash-ref tbl name)])
             (apply-light-update! light update-spec env)
-            (displayln (format "Updated light ~a." name))))
+            (displayln (format "Updated light ~a." name)))))
         (void)]
        ;; remove-object: (remove-object name)
        [`(remove-object ,name)
+       (let ([real-name (resolve-symbol-or-value name env)])
         (unless (symbol? name) (error "remove-object: name must be symbol"))
         (when (hash-has-key? (Scene-objects (global-scene)) name)
           (hash-remove! (Scene-objects (global-scene)) name)
-          (displayln (format "Removed object ~a." name)))
+          (displayln (format "Removed object ~a." name))))
         (void)]
       ;; remove-light
       [`(remove-light ,name)
+      (let ([real-name (resolve-symbol-or-value name env)])
        (unless (symbol? name) (error "remove-light: name must be symbol"))
        (when (hash-has-key? (Scene-lights (global-scene)) name)
          (hash-remove! (Scene-lights (global-scene)) name)
-         (displayln (format "Removed light ~a." name)))
+         (displayln (format "Removed light ~a." name))))
        (void)]
       ;; remove-group
       [`(remove-group ,name)
@@ -453,25 +468,6 @@
           (Vec3 (first vmax) (second vmax) (third vmax))
           mat
           mat4-identity)]
-    ;; triangle 如果需要
-    [`(triangle . ,props)
-     ;; 解析三顶点
-     (define p1 (parse-vec3-prop 'p1 props env))
-     (define p2 (parse-vec3-prop 'p2 props env))
-     (define p3 (parse-vec3-prop 'p3 props env))
-     ;; 解析 material
-     (define mat-entry (assoc 'material props))
-     (unless mat-entry (error "parse-object-spec: missing material"))
-     (define mat-rest (cdr mat-entry))
-     (unless (and (list? mat-rest) (not (null? mat-rest)))
-       (error "parse-object-spec: invalid material spec" mat-entry))
-     (define mat (parse-material-spec mat-rest env))
-     ;; 构造 Triangle
-     (Triangle (Vec3 (first p1) (second p1) (third p1))
-               (Vec3 (first p2) (second p2) (third p2))
-               (Vec3 (first p3) (second p3) (third p3))
-               mat
-               mat4-identity)]
     [else (error "Unknown object type in parse-object-spec:" sexpr)]))
 
 ;; parse-vec3-prop: 类似 parse-vec3-field，但 props 是 list of lists
@@ -522,7 +518,7 @@
                 (Vec3 (eval-expr r env) (eval-expr g env) (eval-expr b env)))]
     [else (error "Unknown light spec:" sexpr)]))
 
-;; parse-transform-spec: '(translate x y z)', '(scale x y z)', '(rotate-axis-angle x y z angle)', '(set-transform (matrix m1 ... m16))', '(reset-transform)', '(compose ...)'
+;; parse-transform-spec: '(translate x y z)', '(scale x y z)', '(set-transform (matrix m1 ... m16))', '(reset-transform)', '(compose ...)'
 (define (parse-transform-spec sexpr env)
   ; (displayln (format "DEBUG: parse-transform-spec input = ~a" sexpr)) ; Debug input
   (let ([result
@@ -689,8 +685,9 @@
   (displayln "  (update-object name (radius r))")
   (displayln "  (update-object name (material ...))")
   (displayln "  (transform name (translate x y z))")
-  (displayln "  (transform name (rotate-axis-angle x y z angle))")
   (displayln "  (transform name (scale x y z))")
+  (displayln "  (transform name (rotate-axis-angle ax ay az angle))")
+  (displayln "  (transform name (set-transform (matrix m1 m2 ... m16)))")
   (displayln "  (group group-name obj1 obj2 ...)")
   (displayln "  (ungroup group-name)")
   (displayln "  (list-objects)")

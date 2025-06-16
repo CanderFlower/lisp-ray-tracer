@@ -6,10 +6,11 @@
 
 ; 设置摄像机、宽高（高质量版）
 (set-camera
-    (pos -0.8 0.3 -1.4)
+  (camera
+    (pos -0.1 0.5 -3.0)
     (look-at -1 1 0.7)
     (up 0 1 0)
-    (fov 60)
+    (fov 35)
     (width 1280)
     (height 720)))
 
@@ -25,6 +26,10 @@
     (min -0.4 -0.4 2.6)
     (max 0.4 0.4 3.4)
     (material diffuse (color 0.7 0.5 0.0))))
+
+; 旋转盒子
+(transform box
+  (rotate-axis-angle 1 1 1 -20))
 
 ; sphere-用球心、半径表示
 ; metal-金属材质，白色基础色，非常光滑
@@ -48,12 +53,11 @@
     (radius 0.2)
     (material diffuse (color 0.2 0.9 0.2))))
 
-
 ; 添加一个水平平面，作为地面：法线 (0,1,0)，距离 1（从原点到平面的距离沿法线方向）
 (add-object floor
   (plane
     (normal 0 1 0)
-    (dist 1)
+    (dist 2)
     (material diffuse (color 0.5 0.2 0.2))))
 
 ; 添加光源
@@ -76,12 +80,11 @@
 ; 查看当前对象列表
 (list-objects)
 
-; 设置全局设置：128样本（高质量）
-(set-global (samples 128))
-; 设置全局设置：最大递归深度为10（高质量）
-(set-global (max-depth 10))
+; 设置全局设置：64样本（高质量），最大深度8
+(set-global (samples 64))
+(set-global (max-depth 8))
 
-; 渲染：使用128样本抗锯齿（设置的），最大递归深度使用10；自动文件名 scene-0001.ppm
+; 渲染：使用64样本抗锯齿（设置的），最大递归深度使用8；自动文件名 scene-0001.ppm
 (render)
 
 ; 对物体进行变换
@@ -95,6 +98,10 @@
 ; 直接重新设置物体材质
 (update-object sphere4
   (material diffuse (color 0.2 0.2 0.9)))
+
+; 更新金属材质：稍微有点不平滑
+(update-object sphere2
+  (material metal (color 1 0.2 0.2) (fuzz 0)))
 
 (list-objects)
 
@@ -115,6 +122,8 @@
 (update-object sphere3
   (material dielectric (ref_idx 1.5)))
 
+(transform sphere3
+  (translate 0 0.2 0))
 
 (list-objects)
 (render)

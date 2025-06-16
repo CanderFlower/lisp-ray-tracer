@@ -327,7 +327,7 @@
                    [emit (if (eq? (Material-type mat) 'emissive)
                              (Material-color mat)
                              (Vec3 0 0 0))])
-              ;; 如果 emissive，直接返回 emission，不再考虑其他光照。（可根据需求调整）
+              ;; 如果 emissive，直接返回 emission，不再考虑其他光照。
               (if (eq? (Material-type mat) 'emissive)
                   emit
                   (begin
@@ -521,6 +521,8 @@
   (define out (open-output-file filename #:mode 'text))
   ;; 写 PPM 头 (P3)
   (fprintf out "P3~%~a ~a~%255~%" width height)
+  (printf "Rendering scene to ~a with width ~a, height ~a, samples ~a, max-depth ~a~%"
+          filename width height samples max-depth)
   ;; 主循环
   (for ([j (in-range height)])
     (for ([i (in-range width)])
