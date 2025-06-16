@@ -2,7 +2,6 @@
 (require racket/string
          racket/port
          racket/pretty
-         racket/json
          "ast.rkt"
          "utils.rkt"
          "render.rkt")
@@ -157,9 +156,9 @@
                   [M (parse-transform-spec transform-spec env)]
                   [old (object-transform-get obj)]
                   [newM (mat4-mul old M)])
-              [displayln (format "old: ~a." old)]
-              [displayln (format "M: ~a." M)]
-              [displayln (format "newM: ~a." newM)]
+              ; [displayln (format "old: ~a." old)]
+              ; [displayln (format "M: ~a." M)]
+              ; [displayln (format "newM: ~a." newM)]
              (object-transform-set! obj newM)
              (displayln (format "Applied transform to object ~a." name)))]
           [(hash-has-key? (Scene-groups (global-scene)) name)
@@ -315,37 +314,16 @@
             (displayln (format "Global max-depth set to ~a." d)))]
          [else (error "set-global: unknown setting spec" setting-spec)])
        (void)]
-      ;; save-scene: (save-scene "file.json")
-      [`(save-scene ,file-expr)
-       (let ([fname (eval-expr file-expr env)])
-         (unless (string? fname) (error "save-scene: filename must be string"))
-         (call-with-output-file fname
-           (lambda (out)
-        (write-json (scene->json (global-scene)) out))
-           #:exists 'replace)
-         (displayln (format "Scene saved to ~a." fname)))
-       (void)]
-      ;; load-scene: (load-scene "file.json")
-      [`(load-scene ,file-expr)
-       (let ([fname (eval-expr file-expr env)])
-         (unless (string? fname) (error "load-scene: filename must be string"))
-         (call-with-input-file fname
-           (lambda (in)
-        (let ([j (read-json in)])
-          (json->scene! (global-scene) j)))
-           )
-         (displayln (format "Scene loaded from ~a." fname)))
-       (void)]
       ;; render: (render (width w)? (height h)? (samples n)? (max-depth d)? (filename "f.ppm")?)
       [`(render . ,opts)
         ;; 调试打印 expr 和 opts
-        (displayln (format "DEBUG: render expr = ~a" expr))
-        (displayln (format "DEBUG: render opts = ~a" opts))
+        ; (displayln (format "DEBUG: render expr = ~a" expr))
+        ; (displayln (format "DEBUG: render opts = ~a" opts))
         ;; 获取当前场景 parameter
         (define scene (global-scene))
         ;; 解析选项列表
         (define opt-map (parse-render-opts opts env))
-        (displayln (format "DEBUG: render options map = ~a" opt-map))
+        ; (displayln (format "DEBUG: render options map = ~a" opt-map))
         ;; 提取参数或使用默认
         (define width
           (or (hash-ref opt-map 'width #f)
@@ -362,8 +340,8 @@
         (define filename
           (or (hash-ref opt-map 'filename #f)
               (generate-filename! scene)))
-        (displayln (format "DEBUG: render parameters: width=~a, height=~a, samples=~a, max-depth=~a, filename=~a"
-                            width height samples max-depth filename))
+        ; (displayln (format "DEBUG: render parameters: width=~a, height=~a, samples=~a, max-depth=~a, filename=~a"
+        ;                     width height samples max-depth filename))
         ;; 调用渲染函数
         (render-scene-to-ppm scene width height samples max-depth filename)
         (displayln
@@ -546,7 +524,7 @@
 
 ;; parse-transform-spec: '(translate x y z)', '(scale x y z)', '(rotate-axis-angle x y z angle)', '(set-transform (matrix m1 ... m16))', '(reset-transform)', '(compose ...)'
 (define (parse-transform-spec sexpr env)
-  (displayln (format "DEBUG: parse-transform-spec input = ~a" sexpr)) ; Debug input
+  ; (displayln (format "DEBUG: parse-transform-spec input = ~a" sexpr)) ; Debug input
   (let ([result
          (match sexpr
            [`(translate ,x ,y ,z)
@@ -563,7 +541,7 @@
            [`(compose ,@subs)
             (foldl (λ (acc t) (mat4-mul acc (parse-transform-spec t env))) mat4-identity subs)]
            [_ (error "Unknown transform spec:" sexpr)])])
-    (displayln (format "DEBUG: parse-transform-spec output = ~a" result)) ; Debug output
+    ; (displayln (format "DEBUG: parse-transform-spec output = ~a" result)) ; Debug output
     result))
 
 ;; parse-render-opts: list of S-expr: '(width w)', '(height h)', '(samples n)', '(max-depth d)', '(filename "f")'
@@ -697,241 +675,6 @@
      (set-SpotLight-angle! light (eval-expr ang env))]
     [else (error "Unknown update-light spec:" update-spec)]))
 
-;; parse JSON <-> Scene
-;; scene->json: 将 Scene 序列化为 JSON-able Racket 对象: hash, lists, symbols -> strings
-(define (vec3->list v) (list (Vec3-x v) (Vec3-y v) (Vec3-z v)))
-(define (mat4->list m) (let ([v (Mat4 m)]) (vector->list v)))
-
-(define (scene->json scene)
-  ;; 返回一 Racket hash 表示 JSON，字段: camera, objects, lights, background, settings, counter
-  (let* ([cam (Scene-camera scene)]
-         [cam-hash (hash 'pos (vec3->list (Camera-pos cam))
-                         'look-at (vec3->list (Camera-look-at cam))
-                         'up (vec3->list (Camera-up cam))
-                         'fov (Camera-fov cam)
-                         'width (Camera-width cam)
-                         'height (Camera-height cam))]
-         [objs (for/list ([kv (in-hash (Scene-objects scene))])
-                 (let ([name (symbol->string (car kv))] [obj (cdr kv)])
-                   (match obj
-                     [(Sphere center radius material transform)
-                      (hash 'type "sphere"
-                            'name name
-                            'center (vec3->list center)
-                            'radius radius
-                            'material (material->json material)
-                            'transform (mat4->list transform))]
-                     [(Plane normal dist material transform)
-                      (hash 'type "plane"
-                            'name name
-                            'normal (vec3->list normal)
-                            'dist dist
-                            'material (material->json material)
-                            'transform (mat4->list transform))]
-                     [(Box vmin vmax material transform)
-                      (hash 'type "box"
-                            'name name
-                            'min (vec3->list vmin)
-                            'max (vec3->list vmax)
-                            'material (material->json material)
-                            'transform (mat4->list transform))]
-                     [(Triangle p1 p2 p3 material transform)
-                      (hash 'type "triangle"
-                            'name name
-                            'p1 (vec3->list p1)
-                            'p2 (vec3->list p2)
-                            'p3 (vec3->list p3)
-                            'material (material->json material)
-                            'transform (mat4->list transform))]
-                     [else (error "scene->json: unknown object type" obj)])))]
-         [lights (for/list ([kv (in-hash (Scene-lights scene))])
-                   (let ([name (symbol->string (car kv))] [light (cdr kv)])
-                     (match light
-                       [(PointLight pos intens)
-                        (hash 'type "point-light" 'name name
-                              'pos (vec3->list pos)
-                              'intensity (vec3->list intens))]
-                       [(DirectionalLight dir intens)
-                        (hash 'type "directional-light" 'name name
-                              'dir (vec3->list dir)
-                              'intensity (vec3->list intens))]
-                       [(AmbientLight intens)
-                        (hash 'type "ambient-light" 'name name
-                              'intensity (vec3->list intens))]
-                       [(SpotLight pos dir angle intens)
-                        (hash 'type "spot-light" 'name name
-                              'pos (vec3->list pos) 'dir (vec3->list dir)
-                              'angle angle 'intensity (vec3->list intens))]
-                       [else (error "scene->json: unknown light type" light)])))]
-         [bg (Scene-background scene)]
-         [bg-json (match bg
-                    [`(color ,r ,g ,b) (hash 'type "color" 'value (list r g b))]
-                    [`(gradient (color ,r1 ,g1 ,b1) (color ,r2 ,g2 ,b2))
-                     (hash 'type "gradient" 'value (list (list r1 g1 b1) (list r2 g2 b2)))]
-                    [else (error "scene->json: unknown background" bg)])]
-         [settings (Scene-settings scene)]
-         [settings-json (hash 'samples (hash-ref settings 'samples)
-                              'max-depth (hash-ref settings 'max-depth))]
-         [rc (Scene-counter scene)])
-    (hash 'camera cam-hash
-          'objects objs
-          'lights lights
-          'background bg-json
-          'settings settings-json
-          'counter rc)))
-
-;; material->json
-(define (material->json mat)
-  (match mat
-    [(Material 'diffuse color _ _ _)
-     (hash 'type "diffuse" 'color (vec3->list color))]
-    [(Material 'metal _ albedo fuzz _)
-     (hash 'type "metal" 'albedo (vec3->list albedo) 'fuzz fuzz)]
-    [(Material 'dielectric _ _ ref-idx _)
-     (hash 'type "dielectric" 'ref_idx ref-idx)]
-    [(Material 'emissive color _ _ _)
-     (hash 'type "emissive" 'color (vec3->list color))]
-    [else (error "material->json: unknown material type" mat)]))
-
-;; json->scene!: 将 Racket JSON 数据填入已有 global-scene，可重置 scene
-(define (json->scene! scene j)
-  ;; j is a hash with keys 'camera, 'objects, 'lights, 'background, 'settings, 'counter
-  (define cam-h (hash-ref j 'camera))
-  (define pos-list (hash-ref cam-h 'pos))
-  (define look-list (hash-ref cam-h 'look-at))
-  (define up-list (hash-ref cam-h 'up))
-  (define fov (hash-ref cam-h 'fov))
-  (define width (hash-ref cam-h 'width))
-  (define height (hash-ref cam-h 'height))
-  (let ([C (Scene-camera scene)])
-    (set-Camera-pos! C (Vec3 (list-ref pos-list 0) (list-ref pos-list 1) (list-ref pos-list 2)))
-    (set-Camera-look-at! C (Vec3 (list-ref look-list 0) (list-ref look-list 1) (list-ref look-list 2)))
-    (set-Camera-up! C (Vec3 (list-ref up-list 0) (list-ref up-list 1) (list-ref up-list 2)))
-    (set-Camera-fov! C fov)
-    (set-Camera-width! C width)
-    (set-Camera-height! C height))
-  ;; objects
-  (hash-clear! (Scene-objects scene))
-  (for ([obj-h (in-list (hash-ref j 'objects))])
-    (define t (hash-ref obj-h 'type))
-    (define name (string->symbol (hash-ref obj-h 'name)))
-    (match t
-      ["sphere"
-       (define center (hash-ref obj-h 'center))
-       (define radius (hash-ref obj-h 'radius))
-       (define mat-h (hash-ref obj-h 'material))
-       (define mat (json->material mat-h))
-       (define trans-list (hash-ref obj-h 'transform))
-       (define transform (Mat4 (list->vector trans-list)))
-       (hash-set! (Scene-objects scene) name
-                  (Sphere (Vec3 (list-ref center 0) (list-ref center 1) (list-ref center 2))
-                          radius mat transform))]
-      ["plane"
-       (define normal (hash-ref obj-h 'normal))
-       (define dist (hash-ref obj-h 'dist))
-       (define mat-h (hash-ref obj-h 'material))
-       (define mat (json->material mat-h))
-       (define trans-list (hash-ref obj-h 'transform))
-       (define transform (Mat4 (list->vector trans-list)))
-       (hash-set! (Scene-objects scene) name
-                  (Plane (Vec3 (list-ref normal 0) (list-ref normal 1) (list-ref normal 2))
-                         dist mat transform))]
-      ["box"
-       (define vmin (hash-ref obj-h 'min))
-       (define vmax (hash-ref obj-h 'max))
-       (define mat-h (hash-ref obj-h 'material))
-       (define mat (json->material mat-h))
-       (define trans-list (hash-ref obj-h 'transform))
-       (define transform (Mat4 (list->vector trans-list)))
-       (hash-set! (Scene-objects scene) name
-                  (Box (Vec3 (list-ref vmin 0) (list-ref vmin 1) (list-ref vmin 2))
-                       (Vec3 (list-ref vmax 0) (list-ref vmax 1) (list-ref vmax 2))
-                       mat transform))]
-      ["triangle"
-       (define p1 (hash-ref obj-h 'p1))
-       (define p2 (hash-ref obj-h 'p2))
-       (define p3 (hash-ref obj-h 'p3))
-       (define mat-h (hash-ref obj-h 'material))
-       (define mat (json->material mat-h))
-       (define trans-list (hash-ref obj-h 'transform))
-       (define transform (Mat4 (list->vector trans-list)))
-       (hash-set! (Scene-objects scene) name
-                  (Triangle (Vec3 (list-ref p1 0) (list-ref p1 1) (list-ref p1 2))
-                            (Vec3 (list-ref p2 0) (list-ref p2 1) (list-ref p2 2))
-                            (Vec3 (list-ref p3 0) (list-ref p3 1) (list-ref p3 2))
-                            mat transform))]
-      [else (error "json->scene!: unknown object type" t)]))
-  ;; lights
-  (hash-clear! (Scene-lights scene))
-  (for ([light-h (in-list (hash-ref j 'lights))])
-    (define t (hash-ref light-h 'type))
-    (define name (string->symbol (hash-ref light-h 'name)))
-    (match t
-      ["point-light"
-       (define pos (hash-ref light-h 'pos))
-       (define intens (hash-ref light-h 'intensity))
-       (hash-set! (Scene-lights scene) name
-                  (PointLight (Vec3 (list-ref pos 0) (list-ref pos 1) (list-ref pos 2))
-                              (Vec3 (list-ref intens 0) (list-ref intens 1) (list-ref intens 2))))]
-      ["directional-light"
-       (define dir (hash-ref light-h 'dir))
-       (define intens (hash-ref light-h 'intensity))
-       (hash-set! (Scene-lights scene) name
-                  (DirectionalLight (vec-normalize (Vec3 (list-ref dir 0) (list-ref dir 1) (list-ref dir 2)))
-                                    (Vec3 (list-ref intens 0) (list-ref intens 1) (list-ref intens 2))))]
-      ["ambient-light"
-       (define intens (hash-ref light-h 'intensity))
-       (hash-set! (Scene-lights scene) name
-                  (AmbientLight (Vec3 (list-ref intens 0) (list-ref intens 1) (list-ref intens 2))))]
-      ["spot-light"
-       (define pos (hash-ref light-h 'pos))
-       (define dir (hash-ref light-h 'dir))
-       (define angle (hash-ref light-h 'angle))
-       (define intens (hash-ref light-h 'intensity))
-       (hash-set! (Scene-lights scene) name
-                  (SpotLight (Vec3 (list-ref pos 0) (list-ref pos 1) (list-ref pos 2))
-                             (vec-normalize (Vec3 (list-ref dir 0) (list-ref dir 1) (list-ref dir 2)))
-                             angle
-                             (Vec3 (list-ref intens 0) (list-ref intens 1) (list-ref intens 2))))]
-      [else (error "json->scene!: unknown light type" t)]))
-  ;; background
-  (define bg-h (hash-ref j 'background))
-  (match (hash-ref bg-h 'type)
-    ["color"
-     (define v (hash-ref bg-h 'value))
-     (set-Scene-background! scene `(color ,@(v)))]
-    ["gradient"
-     (define vs (hash-ref bg-h 'value)) ; list of two lists
-     (set-Scene-background! scene
-                            `(gradient (color ,@(first vs)) (color ,@(second vs))))]
-    [else (error "json->scene!: unknown background type" (hash-ref bg-h 'type))])
-  ;; settings
-  (define settings-h (hash-ref j 'settings))
-  (hash-set! (Scene-settings scene) 'samples (hash-ref settings-h 'samples))
-  (hash-set! (Scene-settings scene) 'max-depth (hash-ref settings-h 'max-depth))
-  ;; counter
-  (set-Scene-counter! scene (hash-ref j 'counter))
-  )
-
-;; json->material
-(define (json->material mat-h)
-  (define t (hash-ref mat-h 'type))
-  (match t
-    ["diffuse"
-     (define c (hash-ref mat-h 'color))
-     (Material 'diffuse (Vec3 (list-ref c 0) (list-ref c 1) (list-ref c 2)) #f #f)]
-    ["metal"
-     (define alb (hash-ref mat-h 'albedo))
-     (define fuzz (hash-ref mat-h 'fuzz))
-     (Material 'metal #f (Vec3 (list-ref alb 0) (list-ref alb 1) (list-ref alb 2)) fuzz)]
-    ["dielectric"
-     (define ri (hash-ref mat-h 'ref_idx))
-     (Material 'dielectric #f #f ri)]
-    ["emissive"
-     (define c (hash-ref mat-h 'color))
-     (Material 'emissive (Vec3 (list-ref c 0) (list-ref c 1) (list-ref c 2)) #f #f)]
-    [else (error "json->material: unknown material type" t)]))
-
 ;; ----------------------------------------
 ;; display-help: 打印 DSL 帮助
 ;; ----------------------------------------
@@ -964,8 +707,6 @@
   (displayln "  (set-background (gradient (color r1 g1 b1) (color r2 g2 b2)))")
   (displayln "  (set-global (samples n))")
   (displayln "  (set-global (max-depth d))")
-  (displayln "  (save-scene \"file.json\")")
-  (displayln "  (load-scene \"file.json\")")
   (displayln "  (render (width w)? (height h)? (samples n)? (max-depth d)? (filename \"f.ppm\")?)")
   (displayln "  (let var expr body...)  ; bind var for body")
   (displayln "  (repeat n body...)      ; loop i from 0 to n-1, i bound in env")

@@ -274,19 +274,17 @@
 (define (refract v n ni_over_nt)
   (let* ([uv (vec-normalize v)]
          [dt (vec-dot uv n)]
-         [discriminant (- 1 (* ni_over_nt ni_over_nt) (+ (* dt dt) (* - (* ni_over_nt ni_over_nt) (* dt dt))))])
-    ;; Actually use formula: discriminant = 1 - (ni_over_nt^2)*(1 - dt^2)
-    (define disc (- 1 (* ni_over_nt ni_over_nt) (* -1 (* ni_over_nt ni_over_nt) (* dt dt)))) ; simplified wrong
-    ;; Better formula:
-    (define disc2 (- 1 (* ni_over_nt ni_over_nt) (* (- 1 (* dt dt)) ni_over_nt ni_over_nt)))
-    ;; But correct: discriminant = 1 - ni_over_nt^2 * (1 - dt^2)
-    (define disc3 (- 1 (* ni_over_nt ni_over_nt) (* (- 1 (* dt dt)) (* ni_over_nt ni_over_nt))))
-    ;; But we do:
-    (define discriminant-correct (- 1 (* ni_over_nt ni_over_nt) (* (- 1 (* dt dt)) ni_over_nt ni_over_nt)))
-    (if (< discriminant-correct 0)
-        #f
-        (let ([refr (vec-sub (vec-scale (vec-sub uv (vec-scale n dt)) ni_over_nt)
-                             (vec-scale n (sqrt discriminant-correct)))])
+         [discriminant (- 1 (* ni_over_nt ni_over_nt) (* (- 1 (* dt dt)) ni_over_nt ni_over_nt))])
+    ;; 调试输出
+    ; (printf "DEBUG refract: uv = ~a, n = ~a, ni_over_nt = ~a~%" uv n ni_over_nt)
+    ; (printf "DEBUG refract: dt = ~a, discriminant = ~a~%" dt discriminant)
+    (if (< discriminant 0)
+        (begin
+          ; (printf "DEBUG refract: discriminant < 0, no refraction~%")
+          #f)
+        (let* ([refr (vec-sub (vec-scale (vec-sub uv (vec-scale n dt)) ni_over_nt)
+                              (vec-scale n (sqrt discriminant)))])
+          ; (printf "DEBUG refract: refracted vector = ~a~%" refr)
           refr))))
 
 ;; schlick 近似
@@ -429,24 +427,80 @@
                                           (* (Vec3-z col) (Vec3-z albedo)))))
                        col)]
                       [(eq? (Material-type mat) 'dielectric)
-                       ;; 折射或反射，根据 Schlick
-                       (let* ([ref-idx (Material-ref-idx mat)]
-                              [etai-over-etat (if (< (vec-dot (Ray-dir ray) n) 0) ; outside
-                                                 (/ 1 ref-idx)
-                                                 ref-idx)]
-                              [unit-dir (vec-normalize (Ray-dir ray))]
-                              [cosine (abs (vec-dot unit-dir n))]
-                              [refr-opt (let ([r (refract unit-dir (if (< (vec-dot unit-dir n) 0) n (vec-scale n -1)) etai-over-etat)])
-                                          r)]
-                              [reflect-prob (schlick cosine ref-idx)]
-                              [rand (random)])
-                         (if (and refr-opt (< rand reflect-prob))
-                             (let ([scattered-ray (Ray (offset-point p (if (< (vec-dot unit-dir n) 0) n (vec-scale n -1))) refr-opt)])
-                               (trace-ray scattered-ray scene (add1 depth)))
-                             ;; 反射
-                             (let ([reflected (reflect unit-dir n)]
-                                   [scattered-ray (Ray (offset-point p n) (reflect unit-dir n))])
-                               (trace-ray scattered-ray scene (add1 depth)))))]
+                          ;; 折射或反射，根据 Schlick：先插入调试
+                          (let* ([ref-idx (Material-ref-idx mat)]
+                                ;; 先打印 ref-idx 类型
+                                ; [_ (printf "DEBUG dielectric: Material-ref-idx 返回 ~a, number? ~a\n"
+                                ;             ref-idx (number? ref-idx))]
+                                ;; 计算 vec-dot(ray.dir, n)
+                                [dot-rn (let ([vd (vec-dot (Ray-dir ray) n)])
+                                          ; (printf "DEBUG dielectric: vec-dot(ray.dir, normal) = ~a, number? ~a\n"
+                                          ;         vd (number? vd))
+                                          vd)]
+                                ;; 计算 etai-over-etat 前，检查 ref-idx
+                                [etai-over-etat
+                                  (begin
+                                    (when (not (number? ref-idx))
+                                      (error "dielectric: ref-idx 不是数字，无法除法:" ref-idx))
+                                    (when (zero? ref-idx)
+                                      (error "dielectric: ref-idx 为 0，非法"))
+                                    (let ([v (if (< dot-rn 0) (/ 1 ref-idx) ref-idx)])
+                                      ; (printf "DEBUG dielectric: etai-over-etat = ~a, number? ~a\n"
+                                      ;         v (number? v))
+                                      v))]
+                                ;; unit-dir
+                                [unit-dir (let ([ud (vec-normalize (Ray-dir ray))])
+                                            ; (printf "DEBUG dielectric: unit-dir = ~a (Vec3? ~a)\n"
+                                            ;         ud (Vec3? ud))
+                                            ud)]
+                                ;; cosine
+                                [cosine (let ([c (abs (vec-dot unit-dir n))])
+                                          ; (printf "DEBUG dielectric: cosine = ~a, number? ~a\n"
+                                          ;         c (number? c))
+                                          c)]
+                                ;; refr-opt: 折射方向或 #f
+                                [refr-opt (let* ([dir-dot (vec-dot unit-dir n)]
+                                                  [normal-for-refract (if (< dir-dot 0) n (vec-scale n -1))]
+                                                  [r (refract unit-dir normal-for-refract etai-over-etat)])
+                                            ; (printf "DEBUG dielectric: refr-opt = ~a, Vec3? ~a, false?#~a\n"
+                                            ;         r (and (not (boolean? r)) (Vec3? r)) (false? r))
+                                            r)]
+                                ;; reflect-prob
+                                [reflect-prob (let ([rp (schlick cosine ref-idx)])
+                                                ; (printf "DEBUG dielectric: reflect-prob = ~a, number? ~a\n"
+                                                ;         rp (number? rp))
+                                                rp)]
+                                ;; rand
+                                [rand (let ([r (random)])
+                                        ; (printf "DEBUG dielectric: random() = ~a, number? ~a\n"
+                                        ;         r (number? r))
+                                        r)])
+                            ;; 再检查 compare
+                            ; (let ([cond-refract (and refr-opt (< rand reflect-prob))])
+                            ;   (printf "DEBUG dielectric: and refr-opt? ~a, (< rand reflect-prob)? ~a, overall? ~a\n"
+                            ;           (not (false? refr-opt)) (< rand reflect-prob) cond-refract)
+                            ;           )
+                            (if (and refr-opt (< rand reflect-prob))
+                                (begin
+                                  ;; 构造 refracted ray
+                                  (let* ([dir-dot2 (vec-dot unit-dir n)]
+                                        [normal-for-refract2 (if (< dir-dot2 0) n (vec-scale n -1))]
+                                        [offset (offset-point p normal-for-refract2)])
+                                    ; (printf "DEBUG dielectric: 选择折射, offset-point = ~a, refr-opt = ~a\n"
+                                    ;         offset refr-opt)
+                                    (let ([scattered-ray (Ray offset refr-opt)])
+                                      ;; trace recursively，可能还要打印递归深度、返回颜色等
+                                      (trace-ray scattered-ray scene (add1 depth)))))
+                                ;; 反射
+                                (begin
+                                  ; (printf "DEBUG dielectric: 选择反射\n")
+                                  (let ([reflected (reflect unit-dir n)]
+                                        [offset (offset-point p n)])
+                                    ; (printf "DEBUG dielectric: reflect-dir = ~a, offset-point = ~a\n"
+                                    ;         reflected offset)
+                                    (let ([scattered-ray (Ray offset reflected)])
+                                      (trace-ray scattered-ray scene (add1 depth)))))))]
+
                       [else
                        col])
                     ;; 最终返回 col
