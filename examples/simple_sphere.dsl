@@ -45,7 +45,7 @@
 ; floor: type=plane, normal=(0 1 0), dist=1, material=diffuse(color=(0.8 0.8 0.8)), transform=Identity
 
 ; 8. 渲染：使用 50 样本抗锯齿，最大递归深度使用默认（如 5）；自动文件名 scene-0001.ppm
-(render (samples 50))
+(render (samples 1))
 
 ; 9. 渲染完成后，解释器会提示 “Rendered to scene-0001.ppm (resolution 300x200, samples=50, max-depth=5)”
 ;    可以在 Python 脚本或图像查看器中将其转换/查看。

@@ -83,7 +83,7 @@
                      [n-world (if transform
                                   (let* ([inv (mat4-inverse transform)]
                                          ;; 对 normal 作为向量应用逆转置：即 (transpose inv) * normal
-                                         [m (Mat4 inv)]
+                                         [m (Mat4-m inv)]
                                          ;; compute transpose(inv) * n-loc
                                          [nx (+ (* (vector-ref m 0) (Vec3-x n-loc))
                                                 (* (vector-ref m 4) (Vec3-y n-loc))
@@ -114,7 +114,7 @@
                      [p-world (if transform (mat4-transform-point transform p-loc) p-loc)]
                      [n-world (if transform
                                   (let* ([inv (mat4-inverse transform)]
-                                         [m (Mat4 inv)]
+                                         [m (Mat4-m inv)]
                                          [nx (+ (* (vector-ref m 0) (Vec3-x normal))
                                                 (* (vector-ref m 4) (Vec3-y normal))
                                                 (* (vector-ref m 8) (Vec3-z normal)))]
@@ -128,67 +128,103 @@
                                   normal)])
                 (HitInfo t p-world n-world (Plane-material plane))))))))
 
-;; intersect axis-aligned box in local: using slab method
+;; intersect-ray-box: 在 local 空间中，使用 slab 法求 axis-aligned box 相交
+;; 返回 HitInfo 或 #f
 (define (intersect-ray-box ray box)
-  (let* ([bmin (Box-min box)] [bmax (Box-max box)]
-         [orig (Ray-origin ray)] [dir (Ray-dir ray)]
-         [tmin -inf] [tmax +inf])
-    (let ([result 
-           (for/fold ([tmin tmin] [tmax tmax]) ([axis '(x y z)])
-             (define o (case axis [(x) (Vec3-x orig)] [(y) (Vec3-y orig)] [(z) (Vec3-z orig)]))
-             (define d (case axis [(x) (Vec3-x dir)] [(y) (Vec3-y dir)] [(z) (Vec3-z dir)]))
-             (define amin (case axis [(x) (Vec3-x bmin)] [(y) (Vec3-y bmin)] [(z) (Vec3-z bmin)]))
-             (define amax (case axis [(x) (Vec3-x bmax)] [(y) (Vec3-y bmax)] [(z) (Vec3-z bmax)]))
-             (if (zero? d)
-                 (if (or (< o amin) (> o amax))
-                     (values +inf -inf) ; no hit: force tmin>tmax
-                     (values tmin tmax)) ; parallel and inside slab: no change
-                 (let* ([t1 (/ (- amin o) d)]
-                        [t2 (/ (- amax o) d)]
-                        [ta (min t1 t2)]
-                        [tb (max t1 t2)])
-                   (values (max tmin ta) (min tmax tb)))))])
-      (let ([tmin (car result)]
-            [tmax (cadr result)])
-        (if (>= tmax tmin 1e-4)
-            (let ([t tmin])
-              ;; compute intersection point p-loc and normal: normal is axis of minimum t?
-              (let* ([p-loc (vec-add (Ray-origin ray) (vec-scale (Ray-dir ray) t))]
-                     ;; determine which face: compare p-loc coordinate with bmin or bmax
-                     [eps 1e-6]
-                     [nx 0] [ny 0] [nz 0])
-                 ;; check each axis
-                 (cond
-                   [(<= (abs (- (Vec3-x p-loc) (Vec3-x bmin))) eps) (set! nx -1)]
-                   [(<= (abs (- (Vec3-x p-loc) (Vec3-x bmax))) eps) (set! nx 1)]
-                   [(<= (abs (- (Vec3-y p-loc) (Vec3-y bmin))) eps) (set! ny -1)]
-                   [(<= (abs (- (Vec3-y p-loc) (Vec3-y bmax))) eps) (set! ny 1)]
-                   [(<= (abs (- (Vec3-z p-loc) (Vec3-z bmin))) eps) (set! nz -1)]
-                   [(<= (abs (- (Vec3-z p-loc) (Vec3-z bmax))) eps) (set! nz 1)]
-                   [else (void)])
-                 (let ([transform (Box-transform box)]
-                       [normal-local (Vec3 nx ny nz)])
-                   (let* ([p-world (if transform (mat4-transform-point transform p-loc) p-loc)]
-                          [n-world (if (and transform (not (zero? nx ny nz)))
-                                       (let* ([inv (mat4-inverse transform)]
-                                              [m (Mat4 inv)]
-                                              [nx2 (+ (* (vector-ref m 0) (Vec3-x normal-local))
-                                                      (* (vector-ref m 4) (Vec3-y normal-local))
-                                                      (* (vector-ref m 8) (Vec3-z normal-local)))]
-                                              [ny2 (+ (* (vector-ref m 1) (Vec3-x normal-local))
-                                                      (* (vector-ref m 5) (Vec3-y normal-local))
-                                                      (* (vector-ref m 9) (Vec3-z normal-local)))]
-                                              [nz2 (+ (* (vector-ref m 2) (Vec3-x normal-local))
-                                                      (* (vector-ref m 6) (Vec3-y normal-local))
-                                                      (* (vector-ref m 10) (Vec3-z normal-local)))])
-                                         (vec-normalize (Vec3 nx2 ny2 nz2)))
-                                       normal-local)])
-                     (HitInfo t p-world n-world (Box-material box))))))
+  (let* ([bmin (Box-min box)]
+         [bmax (Box-max box)]
+         [orig (Ray-origin ray)]
+         [dir  (Ray-dir ray)])
+    ;; 使用 for/fold 计算每个轴的 tmin, tmax 累积
+    (let-values ([(tmin tmax)
+                  (for/fold ([tmin -inf.0] [tmax +inf.0]) ([axis '(x y z)])
+                    (let* ([o    (case axis
+                                  [(x) (Vec3-x orig)]
+                                  [(y) (Vec3-y orig)]
+                                  [(z) (Vec3-z orig)])]
+                           [d    (case axis
+                                  [(x) (Vec3-x dir)]
+                                  [(y) (Vec3-y dir)]
+                                  [(z) (Vec3-z dir)])]
+                           [amin (case axis
+                                  [(x) (Vec3-x bmin)]
+                                  [(y) (Vec3-y bmin)]
+                                  [(z) (Vec3-z bmin)])]
+                           [amax (case axis
+                                  [(x) (Vec3-x bmax)]
+                                  [(y) (Vec3-y bmax)]
+                                  [(z) (Vec3-z bmax)])])
+                      (if (zero? d)
+                          ;; 平行于该轴面
+                          (if (or (< o amin) (> o amax))
+                              ;; 射线在该轴方向与 slab 无交集
+                              (values +inf.0 -inf.0)
+                              ;; 平行且在 slab 内，不改变 tmin,tmax
+                              (values tmin tmax))
+                          ;; 非平行，计算切片交点
+                          (let* ([t1 (/ (- amin o) d)]
+                                 [t2 (/ (- amax o) d)]
+                                 [ta (min t1 t2)]
+                                 [tb (max t1 t2)])
+                            (values (max tmin ta) (min tmax tb))))))])
+      ;; 现在得到了 tmin, tmax
+      ;; 判断是否有正向交点：若 tmin>ε 则用 tmin；否则若 tmax>ε 则用 tmax；否则无有效交点
+      (let ([valid-t
+             (cond
+               [(> tmin 1e-4) tmin]
+               [(> tmax 1e-4) tmax]
+               [else #f])])
+        (if (and valid-t (<= tmin tmax))
+            ;; 有交点，计算交点位置和法线
+            (let* ([t      valid-t]
+                   ;; 交点在 local 空间
+                   [p-loc  (vec-add (Ray-origin ray)
+                                    (vec-scale (Ray-dir ray) t))]
+                   [eps    1e-6]
+                   [nx     0]
+                   [ny     0]
+                   [nz     0])
+              ;; 判断交点属于哪一面：比较 p-loc 与 bmin/bmax 的距离
+              (cond
+                [(<= (abs (- (Vec3-x p-loc) (Vec3-x bmin))) eps) (set! nx -1)]
+                [(<= (abs (- (Vec3-x p-loc) (Vec3-x bmax))) eps) (set! nx 1)]
+                [(<= (abs (- (Vec3-y p-loc) (Vec3-y bmin))) eps) (set! ny -1)]
+                [(<= (abs (- (Vec3-y p-loc) (Vec3-y bmax))) eps) (set! ny 1)]
+                [(<= (abs (- (Vec3-z p-loc) (Vec3-z bmin))) eps) (set! nz -1)]
+                [(<= (abs (- (Vec3-z p-loc) (Vec3-z bmax))) eps) (set! nz 1)]
+                [else (void)])
+              ;; 局部法线
+              (let* ([normal-local (Vec3 nx ny nz)]
+                     [transform    (Box-transform box)]
+                     ;; 变换到 world 空间
+                     [p-world (if transform
+                                  (mat4-transform-point transform p-loc)
+                                  p-loc)]
+                     [n-world (if transform
+                                  ;; 逆转置矩阵作用于局部法线
+                                  (let* ([inv (mat4-inverse transform)]
+                                         [m   (Mat4-m inv)]
+                                         [nx2 (+ (* (vector-ref m 0) (Vec3-x normal-local))
+                                                 (* (vector-ref m 4) (Vec3-y normal-local))
+                                                 (* (vector-ref m 8) (Vec3-z normal-local)))]
+                                         [ny2 (+ (* (vector-ref m 1) (Vec3-x normal-local))
+                                                 (* (vector-ref m 5) (Vec3-y normal-local))
+                                                 (* (vector-ref m 9) (Vec3-z normal-local)))]
+                                         [nz2 (+ (* (vector-ref m 2) (Vec3-x normal-local))
+                                                 (* (vector-ref m 6) (Vec3-y normal-local))
+                                                 (* (vector-ref m 10) (Vec3-z normal-local)))])
+                                    (vec-normalize (Vec3 nx2 ny2 nz2)))
+                                  normal-local)])
+                ;; 返回 HitInfo：t, 交点世界位置, 世界法线, 以及材质
+                (HitInfo t p-world n-world (Box-material box))))
+            ;; 无交点
             #f)))))
 
-;; 目前未实现 Triangle 相交，如需可添加；为了本作业示例，此处可忽略或以后扩展。
+;; intersect-ray-triangle: 暂未实现
 (define (intersect-ray-triangle ray triangle)
-  #f) ; 可扩展
+  ;; 使用 Möller–Trumbore 算法或其他方法
+  ;; 返回 HitInfo 或 #f
+  #f) ; placeholder
 
 ;; ----------------------------------------
 ;; Scene 相交：遍历所有 objects 和 groups
@@ -205,10 +241,8 @@
 (define (find-nearest-intersection ray scene)
   (let ([best-hit #f] [best-t +inf])
     ;; 遍历 objects
-    (for ([kv (in-hash (Scene-objects scene))])
-      (let* ([name (car kv)]
-             [obj (cdr kv)]
-             ;; transform ray to local
+    (for ([(name obj) (in-hash (Scene-objects scene))])
+      (let* (;; transform ray to local
              [local-ray (cond [(Sphere? obj) (transform-ray-to-local ray (Sphere-transform obj))]
                               [(Plane? obj) (transform-ray-to-local ray (Plane-transform obj))]
                               [(Box? obj) (transform-ray-to-local ray (Box-transform obj))]
@@ -295,9 +329,9 @@
                   emit
                   (begin
                     ;; 1. ambient light contribution
-                    (for ([kv (in-hash (Scene-lights scene))])
-                      (when (AmbientLight? (cdr kv))
-                        (let* ([int (AmbientLight-intensity (cdr kv))]
+                    (for ([(lname light) (in-hash (Scene-lights scene))])
+                      (when (AmbientLight? light)
+                        (let* ([int (AmbientLight-intensity light)]
                                [diffuse-col (if (eq? (Material-type mat) 'diffuse)
                                                 (Material-color mat)
                                                 (if (eq? (Material-type mat) 'metal)
@@ -308,9 +342,8 @@
                                             (* (Vec3-z diffuse-col) (Vec3-z int)))])
                           (set! col (vec-add col c-part)))))
                     ;; 2. other lights: point, directional, spot
-                    (for ([kv (in-hash (Scene-lights scene))])
-                      (let ([light (cdr kv)])
-                        (cond
+                    (for ([(lname light) (in-hash (Scene-lights scene))])
+                      (cond
                           [(PointLight? light)
                            (let* ([to-light (vec-sub (PointLight-pos light) p)]
                                   [dist2 (vec-dot to-light to-light)]
@@ -372,7 +405,7 @@
                                                       (* (Vec3-y diffuse-col) (Vec3-y intens) dotNL atten)
                                                       (* (Vec3-z diffuse-col) (Vec3-z intens) dotNL atten))])
                                      (set! col (vec-add col c-part)))))))]
-                          [else (void)])))
+                          [else (void)]))
                     ;; 3. 反射/折射
                     (cond
                       [(eq? (Material-type mat) 'metal)

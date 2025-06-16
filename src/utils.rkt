@@ -81,8 +81,8 @@
 
 ;; 矩阵乘法: a * b
 (define (mat4-mul a b)
-  (let* ([av (Mat4 a)]
-         [bv (Mat4 b)]
+  (let* ([av (Mat4-m a)]
+         [bv (Mat4-m b)]
          [rv (make-vector 16 0)])
     ;; row i, col j: sum over k: a[i,k] * b[k,j]
     (for ([i (in-range 4)] [j (in-range 4)])
@@ -94,7 +94,7 @@
 
 ;; transform-point: 对 Vec3 应用矩阵，包括平移：把 Vec3 当作 (x,y,z,1)
 (define (mat4-transform-point m v)
-  (let* ([mv (Mat4 m)]
+  (let* ([mv (Mat4-m m)]
          [x (Vec3-x v)] [y (Vec3-y v)] [z (Vec3-z v)]
          [m0 (vector-ref mv 0)]  [m1 (vector-ref mv 1)]  [m2 (vector-ref mv 2)]  [m3 (vector-ref mv 3)]
          [m4 (vector-ref mv 4)]  [m5 (vector-ref mv 5)]  [m6 (vector-ref mv 6)]  [m7 (vector-ref mv 7)]
@@ -111,7 +111,7 @@
 
 ;; transform-dir: 对 Vec3 方向向量应用矩阵，仅旋转和缩放部分，不加平移：把 Vec3 当作 (x,y,z,0)
 (define (mat4-transform-dir m v)
-  (let* ([mv (Mat4 m)]
+  (let* ([mv (Mat4-m m)]
          [x (Vec3-x v)] [y (Vec3-y v)] [z (Vec3-z v)]
          [m0 (vector-ref mv 0)]  [m1 (vector-ref mv 1)]  [m2 (vector-ref mv 2)]
          [m4 (vector-ref mv 4)]  [m5 (vector-ref mv 5)]  [m6 (vector-ref mv 6)]
@@ -125,7 +125,7 @@
 ;; 矩阵逆：实现通用 4x4 逆矩阵算法
 ;; 参考常见 GLU 逆矩阵实现翻译
 (define (mat4-inverse m)
-  (let ([src (Mat4 m)]
+  (let ([src (Mat4-m m)]
         [dst (make-vector 16 0)])
     ;; 使用 local copies for readability
     (define a00 (vector-ref src 0))  (define a01 (vector-ref src 1))
