@@ -84,13 +84,16 @@
   (let* ([av (Mat4-m a)]
          [bv (Mat4-m b)]
          [rv (make-vector 16 0)])
-    ;; row i, col j: sum over k: a[i,k] * b[k,j]
-    (for ([i (in-range 4)] [j (in-range 4)])
-      (let ([sum (for/fold ([s 0]) ([k (in-range 4)]) 
-                   (+ s (* (vector-ref av (+ (* i 4) k))
-                          (vector-ref bv (+ (* k 4) j)))))])
-        (vector-set! rv (+ (* i 4) j) sum)))
+    ;; 嵌套循环，而非 (for ([i ...] [j ...]))
+    (for ([i (in-range 4)])
+      (for ([j (in-range 4)])
+        (let ([sum
+               (for/fold ([s 0]) ([k (in-range 4)])
+                 (+ s (* (vector-ref av (+ (* i 4) k))
+                        (vector-ref bv (+ (* k 4) j)))) )])
+          (vector-set! rv (+ (* i 4) j) sum))))
     (Mat4 rv)))
+
 
 ;; transform-point: 对 Vec3 应用矩阵，包括平移：把 Vec3 当作 (x,y,z,1)
 (define (mat4-transform-point m v)
@@ -180,10 +183,10 @@
 ;; 构造基本变换矩阵
 ;; translation
 (define (make-translation-mat4 dx dy dz)
-  (let ([v (vector 1 0 0 0
-                   0 1 0 0
-                   0 0 1 0
-                   dx dy dz 1)])
+  (let ([v (vector 1 0 0 dx
+                   0 1 0 dy
+                   0 0 1 dz
+                   0 0 0 1)])
     (Mat4 v)))
 
 ;; scale

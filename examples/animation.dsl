@@ -65,7 +65,7 @@
   ; 渲染当前帧，指定文件名带帧号
   (let fname (string-append "animation-" (string-pad-left (number->string i) 3 "0") ".ppm"))
     (render (filename fname)))
-)
+
 
 ; 10. 动画结束后，可在脚本末尾保存场景状态
 (save-scene "animation_scene.json")

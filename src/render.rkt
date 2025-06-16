@@ -253,6 +253,8 @@
                         [(Box? obj) (intersect-ray-box local-ray obj)]
                         [(Triangle? obj) (intersect-ray-triangle local-ray obj)]
                         [else #f])])
+        ;; 输出 ray 和当前 object 以及是否命中
+        ; (printf "Ray: ~a, \nObject: ~a, \nHit?: ~a~%\n\n" ray obj (not (not hit)))
         (when hit
           (let ([t (HitInfo-t hit)])
             (when (< t best-t)
@@ -297,10 +299,13 @@
   (match (Scene-background scene)
     [`(color ,r ,g ,b) (Vec3 r g b)]
     [`(gradient (color ,r1 ,g1 ,b1) (color ,r2 ,g2 ,b2))
-     ;; 用 ray.dir.y 决定 t: t = 0.5*(dir.y + 1)
-     (let* ([dir (Ray-dir ray)]
-            [t (* 0.5 (+ 1 (Vec3-y (vec-normalize dir))))]
-            [c1 (Vec3 r1 g1 b1)] [c2 (Vec3 r2 g2 b2)]
+     (let* ([camera (Scene-camera scene)]
+            [up (vec-normalize (Camera-up camera))]
+            [dir (vec-normalize (Ray-dir ray))]
+            [dot-up (vec-dot dir up)]
+            [t (clamp (* 0.5 (+ 1 dot-up)) 0 1)]
+            [c1 (Vec3 r1 g1 b1)]
+            [c2 (Vec3 r2 g2 b2)]
             [c (vec-add (vec-scale c1 (- 1 t)) (vec-scale c2 t))])
        c)]
     [else ; 未知设置，返回黑
@@ -453,10 +458,8 @@
 ;; render-scene-to-ppm: scene: Scene；width,height,samples,max-depth,filename
 (define (render-scene-to-ppm scene width height samples max-depth filename)
   ;; 更新全局 settings
-  (let* ([old-settings (Scene-settings scene)]
-       [step1        (hash-set old-settings 'samples samples)]
-       [new-settings (hash-set step1 'max-depth max-depth)])
-  (set-Scene-settings! scene new-settings))
+  (hash-set! (Scene-settings scene) 'samples samples)
+  (hash-set! (Scene-settings scene) 'max-depth max-depth)
   ;; 更新 camera 分辨率
   (set-Camera-width! (Scene-camera scene) width)
   (set-Camera-height! (Scene-camera scene) height)
@@ -472,8 +475,11 @@
           ;; jitter in [0,1)
           (let ([jitter-u (random)] [jitter-v (random)])
             (let ([ray (generate-ray (Scene-camera scene) i j width height jitter-u jitter-v)])
+              ;; Print ray direction
+              ; (printf "Ray direction: ~a~%" (Ray-dir ray))
               (let ([col (trace-ray ray scene 0)])
-                (set! acc (vec-add acc col))))))
+              ; (printf "Color from trace-ray: ~a~%" col)
+          (set! acc (vec-add acc col))))))
         ;; average and gamma correction
         (let* ([avg (vec-scale acc (/ 1.0 samples))]
                ;; gamma 校正 γ=2: sqrt

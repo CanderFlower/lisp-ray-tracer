@@ -67,7 +67,6 @@
     [else (error "Cannot eval expression of type" expr)]))
 
 
-;; 初始化全局 Scene
 (define (make-default-scene)
   ;; Scene(camera objects lights groups background settings counter)
   (let ([cam (Camera (Vec3 0 0 5) (Vec3 0 0 0) (Vec3 0 1 0) 60 300 200)]
@@ -75,9 +74,12 @@
         [lights (make-hash)]
         [groups (make-hash)]
         [background '(gradient (color 0.5 0.7 1.0) (color 1.0 1.0 1.0))]
-        [settings (hash 'samples 50 'max-depth 5)]
         [rc 0])
-    (Scene cam objs lights groups background settings rc)))
+    ;; 初始化 settings 为可变哈希，然后插入键值对
+    (let ([settings (make-hash)])
+      (hash-set! settings 'samples 50)
+      (hash-set! settings 'max-depth 5)
+      (Scene cam objs lights groups background settings rc))))
 
 ;; ----------------------------------------
 ;; handle-command: 解析并执行一条 DSL 命令（S-Expr）
@@ -138,7 +140,7 @@
        ;; update-object: (update-object name (center x y z)) 或 (update-object name (material ...)), 只能一个更新 spec
        [`(update-object ,name ,update-spec)
         (unless (symbol? name) (error "update-object: name must be symbol"))
-        (let ([tbl (Scene-objects global-scene)])
+        (let ([tbl (Scene-objects (global-scene))])
           (unless (hash-has-key? tbl name)
             (error "update-object: object not found:" name))
           (let ([old (hash-ref tbl name)])
@@ -155,6 +157,9 @@
                   [M (parse-transform-spec transform-spec env)]
                   [old (object-transform-get obj)]
                   [newM (mat4-mul old M)])
+              [displayln (format "old: ~a." old)]
+              [displayln (format "M: ~a." M)]
+              [displayln (format "newM: ~a." newM)]
              (object-transform-set! obj newM)
              (displayln (format "Applied transform to object ~a." name)))]
           [(hash-has-key? (Scene-groups (global-scene)) name)
@@ -541,21 +546,25 @@
 
 ;; parse-transform-spec: '(translate x y z)', '(scale x y z)', '(rotate-axis-angle x y z angle)', '(set-transform (matrix m1 ... m16))', '(reset-transform)', '(compose ...)'
 (define (parse-transform-spec sexpr env)
-  (match sexpr
-    [`(translate ,x ,y ,z)
-     (make-translation-mat4 (eval-expr x env) (eval-expr y env) (eval-expr z env))]
-    [`(scale ,sx ,sy ,sz)
-     (make-scale-mat4 (eval-expr sx env) (eval-expr sy env) (eval-expr sz env))]
-    [`(rotate-axis-angle ,ax ,ay ,az ,angle)
-     (make-rotation-mat4 (eval-expr ax env) (eval-expr ay env) (eval-expr az env) (eval-expr angle env))]
-    [`(set-transform (matrix ,@ms))
-     (let ([vals (map (λ (e) (eval-expr e env)) ms)])
-       (unless (= (length vals) 16) (error "set-transform matrix requires 16 numbers"))
-       (Mat4 (list->vector vals)))]
-    [`(reset-transform) mat4-identity]
-    [`(compose ,@subs)
-     (foldl (λ (acc t) (mat4-mul acc (parse-transform-spec t env))) mat4-identity subs)]
-    [_ (error "Unknown transform spec:" sexpr)]))
+  (displayln (format "DEBUG: parse-transform-spec input = ~a" sexpr)) ; Debug input
+  (let ([result
+         (match sexpr
+           [`(translate ,x ,y ,z)
+            (make-translation-mat4 (eval-expr x env) (eval-expr y env) (eval-expr z env))]
+           [`(scale ,sx ,sy ,sz)
+            (make-scale-mat4 (eval-expr sx env) (eval-expr sy env) (eval-expr sz env))]
+           [`(rotate-axis-angle ,ax ,ay ,az ,angle)
+            (make-rotation-mat4 (eval-expr ax env) (eval-expr ay env) (eval-expr az env) (eval-expr angle env))]
+           [`(set-transform (matrix ,@ms))
+            (let ([vals (map (λ (e) (eval-expr e env)) ms)])
+              (unless (= (length vals) 16) (error "set-transform matrix requires 16 numbers"))
+              (Mat4 (list->vector vals)))]
+           [`(reset-transform) mat4-identity]
+           [`(compose ,@subs)
+            (foldl (λ (acc t) (mat4-mul acc (parse-transform-spec t env))) mat4-identity subs)]
+           [_ (error "Unknown transform spec:" sexpr)])])
+    (displayln (format "DEBUG: parse-transform-spec output = ~a" result)) ; Debug output
+    result))
 
 ;; parse-render-opts: list of S-expr: '(width w)', '(height h)', '(samples n)', '(max-depth d)', '(filename "f")'
 (define (parse-render-opts opts env)
@@ -599,21 +608,21 @@
     [(Triangle? obj) (set-Triangle-transform! obj M)]
     [else (void)]))
 
-;; object-summary: 返回简短字符串描述
+;; object-summary
 (define (object-summary obj)
   (cond
     [(Sphere? obj)
-     (format "type=sphere, center=~a, radius=~a, material=~a"
-             (Sphere-center obj) (Sphere-radius obj) (Material-type (Sphere-material obj)))]
+      (format "type=sphere, center=~a, radius=~a, material=~a, \n\ttransform=~a"
+              (Sphere-center obj) (Sphere-radius obj) (Material-type (Sphere-material obj)) (Sphere-transform obj))]
     [(Plane? obj)
-     (format "type=plane, normal=~a, dist=~a, material=~a"
-             (Plane-normal obj) (Plane-dist obj) (Material-type (Plane-material obj)))]
+      (format "type=plane, normal=~a, dist=~a, material=~a, \n\ttransform=~a"
+              (Plane-normal obj) (Plane-dist obj) (Material-type (Plane-material obj)) (Plane-transform obj))]
     [(Box? obj)
-     (format "type=box, min=~a, max=~a, material=~a"
-             (Box-min obj) (Box-max obj) (Material-type (Box-material obj)))]
+      (format "type=box, min=~a, max=~a, material=~a, \n\ttransform=~a"
+              (Box-min obj) (Box-max obj) (Material-type (Box-material obj)) (Box-transform obj))]
     [(Triangle? obj)
-     (format "type=triangle, p1=~a, p2=~a, p3=~a, material=~a"
-             (Triangle-p1 obj) (Triangle-p2 obj) (Triangle-p3 obj) (Material-type (Triangle-material obj)))]
+      (format "type=triangle, p1=~a, p2=~a, p3=~a, material=~a, \n\ttransform=~a"
+              (Triangle-p1 obj) (Triangle-p2 obj) (Triangle-p3 obj) (Material-type (Triangle-material obj)) (Triangle-transform obj))]
     [else (format "unknown object type")]))
 
 ;; light-summary
