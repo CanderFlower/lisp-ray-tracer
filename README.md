@@ -36,3 +36,16 @@ There are several example scripts in the `examples` directory. You can run them 
 - `check.dsl`: A simple scene with different spheres and lighting. 
 - `render.dsl`: Same as `check.dsl`, but with higher resolution and quality settings. (Time to render: ~45min)
 - `repeat.dsl`: A scene to show how to use loops in the DSL.
+
+## Result
+- Check & Render
+
+![scene1](images/render/scene-1.png)
+![scene2](images/render/scene-2.png)
+![scene3](images/render/scene-3.png)
+
+- Repeat
+
+![repeat1](images/repeat/scene-1.png)
+
+![repeat2](images/repeat/scene-2.png)
